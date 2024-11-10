@@ -1,0 +1,18 @@
+export const fixedContributors = [
+    'Abrar Sami Chowdhury',
+    'Naseef Fatemi',
+    'Omran Jamal',
+    'Shashoto Seam',
+    'Shadman Sakib Sorbo',
+    'Naseef Fatemi',
+    'Maruf Marzuq',
+    'Rabbi Mehedi',
+    'Erfan Mahmud',
+    'Mehraab Anwar',
+    'Kazi Rafiqul Alam',
+    'Hussain Elius',
+    'Imtiaz Ahmed Khan',
+    'Shariba Seherin',
+    'Sikder Shadman Sami',
+    'Sashoto Seeam',
+];

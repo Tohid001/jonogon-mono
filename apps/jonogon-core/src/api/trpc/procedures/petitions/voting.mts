@@ -1,5 +1,7 @@
 import {protectedProcedure} from '../../middleware/protected.mjs';
+import {TRPCError} from '@trpc/server';
 import {z} from 'zod';
+import { calculateVoteVelocity } from '../../../utility/feed-algorithm.mjs';
 
 export const vote = protectedProcedure
     .input(
@@ -9,7 +11,29 @@ export const vote = protectedProcedure
         }),
     )
     .mutation(async ({input, ctx}) => {
-        await ctx.services.postgresQueryBuilder
+        // Check if the petition is flagged
+        const petition = await ctx.services.postgresQueryBuilder
+            .selectFrom('petitions')
+            .where('id', '=', input.petition_id)
+            .select(['flagged_at', 'created_by']) // Select flagged_at to check if the petition is flagged
+            .executeTakeFirst();
+
+        if (!petition) {
+            throw new TRPCError({
+                code: 'NOT_FOUND',
+                message: 'petition-not-found',
+            });
+        }
+
+        // If the petition is flagged, prevent voting
+        if (petition.flagged_at) {
+            throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'voting is not allowed on flagged petitions',
+            });
+        }
+
+        const result = await ctx.services.postgresQueryBuilder
             .insertInto('petition_votes')
             .values({
                 petition_id: input.petition_id,
@@ -24,7 +48,48 @@ export const vote = protectedProcedure
                         updated_at: new Date(),
                     }),
             )
+            .returning(['id'])
             .executeTakeFirst();
+
+        if (result) {
+            const petition = await ctx.services.postgresQueryBuilder
+                .selectFrom('petitions')
+                .where('id', '=', input.petition_id)
+                .select(['created_by', 'score', 'approved_at'])
+                .executeTakeFirst();
+
+            if (petition) {
+                const { logScore, newScore } = calculateVoteVelocity(petition?.approved_at, petition.score, input.vote);
+                await ctx.services.postgresQueryBuilder
+                    .updateTable('petitions')
+                    .set({ score: newScore, log_score: logScore })
+                    .where('id', '=', input.petition_id)
+                    .execute();
+                await ctx.services.postgresQueryBuilder
+                    .transaction()
+                    .execute(async (t) => {
+                        await t
+                            .deleteFrom('notifications')
+                            .where('type', '=', 'vote')
+                            .where('vote_id', '=', result.id)
+                            .execute();
+
+                        await t
+                            .insertInto('notifications')
+                            .values({
+                                user_id: petition.created_by,
+                                type: 'vote',
+                                actor_user_id: ctx.auth.user_id,
+                                petition_id: result.id,
+                                vote_id: result.id,
+                                meta: {
+                                    vote: input.vote === 'up' ? 1 : -1,
+                                },
+                            })
+                            .executeTakeFirst();
+                    });
+            }
+        }
 
         return {
             input,
@@ -39,11 +104,42 @@ export const clearVote = protectedProcedure
         }),
     )
     .mutation(async ({input, ctx}) => {
-        await ctx.services.postgresQueryBuilder
+        // Check if the petition is flagged
+        const petition = await ctx.services.postgresQueryBuilder
+            .selectFrom('petitions')
+            .where('id', '=', input.petition_id)
+            .select(['flagged_at']) // Select flagged_at to check if the petition is flagged
+            .executeTakeFirst();
+
+        if (!petition) {
+            throw new TRPCError({
+                code: 'NOT_FOUND',
+                message: 'petition-not-found',
+            });
+        }
+
+        // If the petition is flagged, prevent clearing the vote
+        if (petition.flagged_at) {
+            throw new TRPCError({
+                code: 'FORBIDDEN',
+                message: 'clearing vote is not allowed on flagged petitions',
+            });
+        }
+
+        const result = await ctx.services.postgresQueryBuilder
             .deleteFrom('petition_votes')
             .where('petition_id', '=', input.petition_id)
             .where('user_id', '=', `${ctx.auth.user_id}`)
+            .returning(['id'])
             .executeTakeFirst();
+
+        if (result) {
+            await ctx.services.postgresQueryBuilder
+                .deleteFrom('notifications')
+                .where('type', '=', 'vote')
+                .where('vote_id', '=', result.id)
+                .execute();
+        }
 
         return {
             input,

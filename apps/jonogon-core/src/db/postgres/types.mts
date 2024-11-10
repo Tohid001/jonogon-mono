@@ -6,7 +6,57 @@ export type Generated<T> = T extends ColumnType<infer S, infer I, infer U>
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [K in string]?: JsonValue;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
+
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface Comments {
+  body: string | null;
+  created_at: Generated<Timestamp>;
+  created_by: Int8;
+  deleted_at: Timestamp | null;
+  deleted_by: Int8 | null;
+  depth: Int8;
+  highlighted_at: Timestamp | null;
+  id: Generated<Int8>;
+  parent_id: Int8 | null;
+  petition_id: Int8;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface CommentVotes {
+  comment_id: Int8;
+  created_at: Generated<Timestamp>;
+  id: Generated<Int8>;
+  nullified_at: Timestamp | null;
+  updated_at: Generated<Timestamp>;
+  user_id: Int8;
+  vote: number;
+}
+
+export interface Notifications {
+  actor_user_id: Int8 | null;
+  comment_id: Int8 | null;
+  comment_vote_id: Int8 | null;
+  created_at: Generated<Timestamp>;
+  id: Generated<Int8>;
+  meta: Json | null;
+  petition_id: Int8 | null;
+  reply_comment_id: Int8 | null;
+  type: string;
+  user_id: Int8;
+  vote_id: Int8 | null;
+}
 
 export interface PetitionAttachments {
   attachment: string;
@@ -34,10 +84,15 @@ export interface Petitions {
   moderated_by: Int8 | null;
   rejected_at: Timestamp | null;
   rejection_reason: string | null;
+  flagged_at: Timestamp | null;
+  flagged_reason: string | null;
   submitted_at: Timestamp | null;
   target: string | null;
   title: string | null;
   updated_at: Generated<Timestamp>;
+  upvote_target: number | null;
+  score: number;
+  log_score: number;
 }
 
 export interface PetitionVotes {
@@ -68,9 +123,13 @@ export interface Users {
   phone_number_hmac: string;
   picture: string | null;
   updated_at: Generated<Timestamp>;
+  username: string | null;
 }
 
 export interface DB {
+  comment_votes: CommentVotes;
+  comments: Comments;
+  notifications: Notifications;
   petition_attachments: PetitionAttachments;
   petition_votes: PetitionVotes;
   petitions: Petitions;

@@ -37,9 +37,12 @@ export const getPetition = publicProcedure
                 'petitions.submitted_at',
                 'petitions.rejected_at',
                 'petitions.rejection_reason',
+                `petitions.flagged_at`,
+                `petitions.flagged_reason`,
                 'petitions.approved_at',
                 'petitions.formalized_at',
                 'petition_votes.vote as user_vote',
+                'petitions.upvote_target as upvote_target',
             ])
             .where('petitions.id', '=', input.id)
             .where('petitions.deleted_at', 'is', null)
@@ -107,26 +110,56 @@ export const getPetition = publicProcedure
         };
     });
 
-export const createPetition = protectedProcedure.mutation(
-    async ({input, ctx}) => {
-        const existingDraft = await ctx.services.postgresQueryBuilder
-            .selectFrom('petitions')
-            .select(['petitions.id'])
-            .where('created_by', '=', `${ctx.auth.user_id}`)
-            .where('submitted_at', 'is', null)
-            .executeTakeFirst();
+export const createPetition = protectedProcedure
+    .input(
+        z
+            .object({
+                loggedOutDraft: z
+                    .object({
+                        title: z.string(),
+                        location: z.string(),
+                        target: z.string(),
+                        description: z.string(),
+                    })
+                    .partial(),
+            })
+            .optional(),
+    )
+    .mutation(async ({input, ctx}) => {
+        if (!input) {
+            const existingDraft = await ctx.services.postgresQueryBuilder
+                .selectFrom('petitions')
+                .select(['petitions.id'])
+                .where('created_by', '=', `${ctx.auth.user_id}`)
+                .where('submitted_at', 'is', null)
+                .where('deleted_at', 'is', null)
+                .orderBy('created_at', 'desc')
+                .executeTakeFirst();
 
-        if (existingDraft) {
-            return {
-                data: existingDraft,
-            };
+            if (existingDraft) {
+                return {
+                    data: existingDraft,
+                };
+            }
         }
 
         const created = await ctx.services.postgresQueryBuilder
             .insertInto('petitions')
-            .values({
-                created_by: ctx.auth.user_id,
-            })
+            .values(
+                !input
+                    ? {
+                          created_by: ctx.auth.user_id,
+                      }
+                    : {
+                          created_by: ctx.auth.user_id,
+                          ...pick(input.loggedOutDraft, [
+                              'title',
+                              'location',
+                              'target',
+                              'description',
+                          ]),
+                      },
+            )
             .returning(['petitions.id'])
             .executeTakeFirst();
 
@@ -161,8 +194,7 @@ export const createPetition = protectedProcedure.mutation(
         return {
             data: created,
         };
-    },
-);
+    });
 
 export const updatePetition = protectedProcedure
     .input(
@@ -416,4 +448,94 @@ export const remove = protectedProcedure
         }
 
         return {input, data: deleted, message: 'deleted'};
+    });
+
+export const getOgImageDetails = publicProcedure
+    .input(
+        z.object({
+            id: z.string(),
+        }),
+    )
+    .query(async ({input, ctx}) => {
+        const petition = await ctx.services.postgresQueryBuilder
+            .selectFrom('petitions')
+            .select([
+                'petitions.title',
+                'petitions.location',
+                'petitions.target',
+                'petitions.created_at',
+                'petitions.created_by',
+            ])
+            .where('petitions.id', '=', input.id)
+            .where('petitions.deleted_at', 'is', null)
+            .executeTakeFirst();
+
+        if (!petition) {
+            throw new TRPCError({
+                code: 'NOT_FOUND',
+                message: 'petition-not-found',
+            });
+        }
+
+        const upvoteCount = await ctx.services.postgresQueryBuilder
+            .selectFrom('petition_votes')
+            .select(({fn}) => [fn.count('id').as('count')])
+            .where('petition_id', '=', input.id)
+            .where('vote', '=', 1)
+            .executeTakeFirst();
+
+        const downvoteCount = await ctx.services.postgresQueryBuilder
+            .selectFrom('petition_votes')
+            .select(({fn}) => [fn.count('id').as('count')])
+            .where('petition_id', '=', input.id)
+            .where('vote', '=', -1)
+            .executeTakeFirst();
+
+        const commentCount = await ctx.services.postgresQueryBuilder
+            .selectFrom('comments')
+            .select(({fn}) => [fn.count('id').as('count')])
+            .where('petition_id', '=', input.id)
+            .where('deleted_at', 'is', null)
+            .executeTakeFirst();
+
+        const mainImage = await ctx.services.postgresQueryBuilder
+            .selectFrom('petition_attachments')
+            .select('attachment')
+            .where('petition_id', '=', input.id)
+            .where('is_image', '=', true)
+            .where('deleted_at', 'is', null)
+            .orderBy('created_at', 'asc')
+            .limit(1)
+            .executeTakeFirst();
+
+        const user = await ctx.services.postgresQueryBuilder
+            .selectFrom('users')
+            .select(['id', 'name', 'picture'])
+            .where('id', '=', `${petition.created_by}`)
+            .executeTakeFirst();
+
+        const formattedDate = new Date(petition.created_at).toLocaleDateString(
+            'en-GB',
+            {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+            },
+        );
+
+        return {
+            data: {
+                title: petition.title,
+                location: petition.location,
+                target: petition.target,
+                created_at: formattedDate,
+                petition_upvote_count: Number(upvoteCount?.count ?? 0),
+                petition_downvote_count: Number(downvoteCount?.count ?? 0),
+                petition_comments_count: Number(commentCount?.count ?? 0),
+                main_image: mainImage?.attachment ?? null,
+                created_by_id: user?.id ?? null,
+                created_by_name: user?.name ?? null,
+                created_by_image: user?.picture ?? null,
+            },
+        };
     });

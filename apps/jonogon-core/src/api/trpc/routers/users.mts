@@ -1,4 +1,4 @@
-import {router} from '../index.mjs';
+import {publicProcedure, router} from '../index.mjs';
 import {z} from 'zod';
 import {protectedProcedure} from '../middleware/protected.mjs';
 import {TRPCError} from '@trpc/server';
@@ -85,4 +85,26 @@ export const userRouter = router({
                 message: 'updated',
             };
         }),
+    getAllUserNames: publicProcedure.query(async ({ctx}) => {
+        const userNames = await ctx.services.postgresQueryBuilder
+            .selectFrom('users')
+            .select('users.name') // Select only user names
+            .where('users.name', 'is not', null) // Exclude any null names
+            .distinctOn('users.id') // Ensure unique users
+            .execute();
+
+        return userNames;
+    }),
+    getTotalNumberOfUsers: publicProcedure.query(async ({ctx}) => {
+        const count = await ctx.services.postgresQueryBuilder
+            .selectFrom('users')
+            .select((eb) => eb.fn.count('id').as('count'))
+            .executeTakeFirst();
+
+        return {
+            data: {
+                count,
+            },
+        };
+    }),
 });
